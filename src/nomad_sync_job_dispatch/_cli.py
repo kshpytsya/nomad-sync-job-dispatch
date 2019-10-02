@@ -86,13 +86,13 @@ def validate_meta(
 )
 @click.option(
     "--nomad-timeout",
-    metavar="<timeout>",
+    metavar="<sec>",
     type=float,
     help="Nomad client API timeout.",
 )
 @click.option(
     "--alloc-timeout",
-    metavar="<timeout>",
+    metavar="<sec>",
     type=float,
     show_default=True,
     default=15.0,
@@ -100,7 +100,7 @@ def validate_meta(
 )
 @click.option(
     "--alloc-timeout-step",
-    metavar="<timeout>",
+    metavar="<sec>",
     type=float,
     show_default=True,
     default=2.0,
@@ -119,11 +119,19 @@ def validate_meta(
 )
 @click.option(
     "--log-poll-interval",
-    metavar="<timeout>",
+    metavar="<sec>",
     type=float,
     show_default=True,
     default=2.0,
     help="Log polling interval.",
+)
+@click.option(
+    "--alloc-poll-interval",
+    metavar="<sec>",
+    type=float,
+    show_default=True,
+    default=2.0,
+    help="Allocation status polling interval.",
 )
 @click.argument("job", nargs=1)
 @click.argument(
@@ -294,6 +302,8 @@ def root(**opts: tp.Any) -> None:
         for thread in threads:
             thread.start()
 
+        alloc_poll_interval = opts["alloc_poll_interval"]
+
         while True:
             try:
                 # TODO find a way to use "blocking query" mechaninsm which
@@ -306,7 +316,7 @@ def root(**opts: tp.Any) -> None:
             if allocation_client_status in ["complete", "failed", "lost"]:
                 break
 
-            time.sleep(2)
+            time.sleep(alloc_poll_interval)
 
         logger.debug("allocation complete with status \"%s\", stopping streaming threads", allocation_client_status)
         stop_streaming.set()
