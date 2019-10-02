@@ -1,6 +1,7 @@
 import base64
 import logging
 import sys
+import time
 import typing as tp
 
 import click
@@ -79,13 +80,29 @@ def validate_meta(
     + "merged into the job's metadata. The job may define a default value for the "
     + "key which is overridden when dispatching. The flag can be provided more than "
     + "once to inject multiple metadata key/value pairs. Arbitrary keys are not "
-    + "allowed. The parameterized job must allow the key to be merged. ",
+    + "allowed. The parameterized job must allow the key to be merged.",
 )
 @click.option(
     "--nomad-timeout",
     metavar="<timeout>",
     type=float,
-    help="Nomad client API timeout",
+    help="Nomad client API timeout.",
+)
+@click.option(
+    "--alloc-timeout",
+    metavar="<timeout>",
+    type=float,
+    show_default=True,
+    default=15.0,
+    help="Time to wait for job allocation to be created.",
+)
+@click.option(
+    "--alloc-timeout-step",
+    metavar="<timeout>",
+    type=float,
+    show_default=True,
+    default=2.0,
+    help="Job allocation polling interval.",
 )
 @click.argument("job", nargs=1)
 @click.argument(
@@ -135,16 +152,40 @@ def root(**opts: tp.Any) -> None:
     try:
         dispatch_job_resp = nomad_api.job.dispatch_job(opts["job"], meta=opts["meta"], payload=payload_b64)
     except nomad.api.exceptions.BaseNomadException as e:
-        raise click.ClickException(e.nomad_resp.text)
+        raise click.ClickException(f"failed to dispatch job: {e.nomad_resp.text}")
 
     logger.debug("dispatch_job response: %s", dispatch_job_resp)
 
     dispatched_job_id = dispatch_job_resp["DispatchedJobID"]
+    dispatched_job_eval_id = dispatch_job_resp["EvalID"]
 
     try:
-        pass
+        def wait_for_alloc() -> tp.List[tp.Any]:
+            deadline = time.time() + opts["alloc_timeout"]
+            while True:
+                remaining = deadline - time.time()
+                if remaining < 0:
+                    raise click.ClickException("timed out waiting for allocation to be created")
+
+                try:
+                    allocations = nomad_api.evaluation.get_allocations(dispatched_job_eval_id)
+                except nomad.api.exceptions.BaseNomadException as e:
+                    raise click.ClickException(f"failed getting evaluation allocations: {e.nomad_resp.text}")
+
+                if allocations:
+                    assert isinstance(allocations, list)
+                    return allocations
+
+                logger.debug("waiting for allocation to appear, {remaining:1.0}s remaining to deadline")
+                time.sleep(min(remaining, opts["alloc_timeout_step"]))
+
+        allocations = wait_for_alloc()
+        if len(allocations) != 1:
+            raise click.ClickException(f"expected a single allocation to appear, but got {len(allocations)}")
+
+        print(allocations)
     finally:
         try:
             nomad_api.job.deregister_job(dispatched_job_id)
         except nomad.api.exceptions.BaseNomadException as e:
-            logger.error("Failed to deregister dispatched job: %s", e.nomad_resp.text)
+            logger.error("failed to deregister dispatched job: %s", e.nomad_resp.text)
