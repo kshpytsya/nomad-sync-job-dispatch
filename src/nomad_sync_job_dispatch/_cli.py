@@ -81,6 +81,12 @@ def validate_meta(
     + "once to inject multiple metadata key/value pairs. Arbitrary keys are not "
     + "allowed. The parameterized job must allow the key to be merged. ",
 )
+@click.option(
+    "--nomad-timeout",
+    metavar="<timeout>",
+    type=float,
+    help="Nomad client API timeout",
+)
 @click.argument("job", nargs=1)
 @click.argument(
     "input",
@@ -118,15 +124,27 @@ def root(**opts: tp.Any) -> None:
         ("region", "region"),
         ("namespace", "namespace"),
         ("token", "token"),
+        ("nomad_timeout", "timeout"),
     ]:
         opt_value = opts[cli_opt_name]
         if opt_value is not None:
             nomad_opts[nomad_opt_name] = opt_value
 
     nomad_api = nomad.Nomad(**nomad_opts)
-    job = nomad_api.dispatch_job(opts["job"], meta=opts["meta"], payload=payload_b64)
-    print(job)
+
+    try:
+        dispatch_job_resp = nomad_api.job.dispatch_job(opts["job"], meta=opts["meta"], payload=payload_b64)
+    except nomad.api.exceptions.BaseNomadException as e:
+        raise click.ClickException(e.nomad_resp.text)
+
+    logger.debug("dispatch_job response: %s", dispatch_job_resp)
+
+    dispatched_job_id = dispatch_job_resp["dispatch_job_resp"]
+
     try:
         pass
     finally:
-        pass
+        try:
+            nomad_api.job.deregister_job(dispatched_job_id)
+        except nomad.api.exceptions.BaseNomadException as e:
+            logger.error("Failed to deregister dispatched job: %s", e.nomad_resp.text)
