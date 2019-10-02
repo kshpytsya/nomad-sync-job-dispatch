@@ -279,6 +279,13 @@ def root(**opts: tp.Any) -> None:
                     if stop_streaming.wait(log_poll_interval):
                         stop_on_empty_response = True
 
+            if tail:
+                # Note: it appears that Nomad always adds a trailing "\n" at the end of log
+                # be let us not rely on that
+                dest_fd.buffer.write(line_prefix)
+                dest_fd.buffer.write(tail)
+                dest_fd.buffer.write(b"\n")
+
         for task_to_monitor in tasks_to_monitor:
             for log_type in [0, 1]:
                 threads.append(threading.Thread(target=streaming_func, args=(task_to_monitor, log_type)))
