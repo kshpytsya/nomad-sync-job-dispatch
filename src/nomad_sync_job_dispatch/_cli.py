@@ -302,18 +302,19 @@ def root(**opts: tp.Any) -> None:
             except nomad.api.exceptions.BaseNomadException as e:
                 raise click.ClickException(f"failed getting allocation status: {e.nomad_resp.text}")
 
-            if allocation_status["ClientStatus"] in ["complete", "failed", "lost"]:
+            allocation_client_status = allocation_status["ClientStatus"]
+            if allocation_client_status in ["complete", "failed", "lost"]:
                 break
 
             time.sleep(2)
 
-        logger.debug("stopping streaming threads")
+        logger.debug("allocation complete with status \"%s\", stopping streaming threads", allocation_client_status)
         stop_streaming.set()
 
         for thread in threads:
             thread.join()
 
-        if allocation_status["ClientStatus"] != "complete":
+        if allocation_client_status != "complete":
             sys.exit(1)
     finally:
         try:
