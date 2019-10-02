@@ -139,7 +139,7 @@ def root(**opts: tp.Any) -> None:
 
     logger.debug("dispatch_job response: %s", dispatch_job_resp)
 
-    dispatched_job_id = dispatch_job_resp["dispatch_job_resp"]
+    dispatched_job_id = dispatch_job_resp["DispatchedJobID"]
 
     try:
         pass
