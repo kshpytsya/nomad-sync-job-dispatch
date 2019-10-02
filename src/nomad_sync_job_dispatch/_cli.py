@@ -1,6 +1,8 @@
 import base64
+import json
 import logging
 import sys
+import threading
 import time
 import typing as tp
 
@@ -104,6 +106,20 @@ def validate_meta(
     default=2.0,
     help="Job allocation polling interval.",
 )
+@click.option(
+    "--task",
+    metavar="<task>",
+    multiple=True,
+    help="Task to monitor. May be specified multiple times.",
+)
+@click.option(
+    "--log-poll-interval",
+    metavar="<timeout>",
+    type=float,
+    show_default=True,
+    default=2.0,
+    help="Log polling interval.",
+)
 @click.argument("job", nargs=1)
 @click.argument(
     "input",
@@ -176,16 +192,68 @@ def root(**opts: tp.Any) -> None:
                     assert isinstance(allocations, list)
                     return allocations
 
-                logger.debug(f"waiting for allocation to appear, {remaining:1.0}s remaining till deadline")
+                logger.debug(f"waiting for allocation to appear, {remaining:1.0f}s remaining till deadline")
                 time.sleep(min(remaining, opts["alloc_timeout_step"]))
 
         allocations = wait_for_alloc()
         if len(allocations) != 1:
             raise click.ClickException(f"expected a single allocation to appear, but got {len(allocations)}")
 
-        alloc_id = allocations[0]["ID"]
+        allocation = allocations[0]
+        alloc_id = allocation["ID"]
 
         logger.debug(f"got allocation {alloc_id}")
+
+        if opts["task"] is None:
+            tasks_to_monitor = sorted(allocation["TaskStates"])
+        else:
+            tasks_to_monitor = []
+            for i in opts["task"]:
+                if i not in allocation["TaskStates"]:
+                    raise click.ClickException(f"task \"{i}\" is not found")
+                tasks_to_monitor.append(i)
+
+        threads = []
+
+        def streaming_func(task: str, log_type: int) -> None:
+            offset = 0
+            log_poll_interval = opts["log_poll_interval"]
+            type_str = ["stdout", "stderr"][log_type]
+            dest_fd = [sys.stdout, sys.stderr][log_type]
+
+            while True:
+                try:
+                    response = nomad_api.client.stream_logs.stream(
+                        id=alloc_id,
+                        task=task,
+                        offset=offset,
+                        type=type_str,
+                    )
+                except nomad.api.exceptions.BaseNomadException as e:
+                    logger.error(
+                        f"log streaming failed (alloc={alloc_id}, task={task}, type={type}): {e.nomad_resp.text}",
+                    )
+                    break
+
+                if not response:
+                    break
+
+                parsed_response = json.loads(response)
+                data = base64.b64decode(parsed_response["Data"])
+                dest_fd.buffer.write(data)
+                dest_fd.flush()
+                offset = parsed_response["Offset"]
+                time.sleep(log_poll_interval)
+
+        for task_to_monitor in tasks_to_monitor:
+            for log_type in [0, 1]:
+                threads.append(threading.Thread(target=streaming_func, args=(task_to_monitor, log_type)))
+
+        for thread in threads:
+            thread.start()
+
+        for thread in threads:
+            thread.join()
     finally:
         try:
             nomad_api.job.deregister_job(dispatched_job_id)
