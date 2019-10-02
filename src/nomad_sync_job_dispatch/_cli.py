@@ -176,14 +176,16 @@ def root(**opts: tp.Any) -> None:
                     assert isinstance(allocations, list)
                     return allocations
 
-                logger.debug("waiting for allocation to appear, {remaining:1.0}s remaining to deadline")
+                logger.debug(f"waiting for allocation to appear, {remaining:1.0}s remaining till deadline")
                 time.sleep(min(remaining, opts["alloc_timeout_step"]))
 
         allocations = wait_for_alloc()
         if len(allocations) != 1:
             raise click.ClickException(f"expected a single allocation to appear, but got {len(allocations)}")
 
-        print(allocations)
+        alloc_id = allocations[0]["ID"]
+
+        logger.debug(f"got allocation {alloc_id}")
     finally:
         try:
             nomad_api.job.deregister_job(dispatched_job_id)
