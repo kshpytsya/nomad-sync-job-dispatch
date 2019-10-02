@@ -239,6 +239,8 @@ def root(**opts: tp.Any) -> None:
             else:
                 line_prefix = b""
 
+            stop_on_empty_response = False
+
             while True:
                 try:
                     response = nomad_api.client.stream_logs.stream(
@@ -269,9 +271,13 @@ def root(**opts: tp.Any) -> None:
 
                     dest_fd.flush()
                     offset = parsed_response["Offset"]
+                else:
+                    if stop_on_empty_response:
+                        break
 
-                if stop_streaming.wait(log_poll_interval):
-                    break
+                if not stop_on_empty_response:
+                    if stop_streaming.wait(log_poll_interval):
+                        stop_on_empty_response = True
 
         for task_to_monitor in tasks_to_monitor:
             for log_type in [0, 1]:
