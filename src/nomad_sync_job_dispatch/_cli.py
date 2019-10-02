@@ -113,6 +113,11 @@ def validate_meta(
     help="Task to monitor. May be specified multiple times.",
 )
 @click.option(
+    "--prefix-task/--no-prefix-task",
+    default=False,
+    help="Prepend task name before every output line",
+)
+@click.option(
     "--log-poll-interval",
     metavar="<timeout>",
     type=float,
@@ -213,6 +218,12 @@ def root(**opts: tp.Any) -> None:
         else:
             tasks_to_monitor = sorted(allocation["TaskStates"])
 
+        if opts["prefix_task"]:
+            max_task_name_len = max(len(i) for i in tasks_to_monitor)
+        else:
+            max_task_name_len = 0
+
+        line_buffering = len(tasks_to_monitor) > 1
         threads = []
         stop_streaming = threading.Event()
 
@@ -221,6 +232,12 @@ def root(**opts: tp.Any) -> None:
             log_poll_interval = opts["log_poll_interval"]
             type_str = ["stdout", "stderr"][log_type]
             dest_fd = [sys.stdout, sys.stderr][log_type]
+            tail = b""
+
+            if max_task_name_len:
+                line_prefix = f"{task:{max_task_name_len}}:".encode()
+            else:
+                line_prefix = b""
 
             while True:
                 try:
@@ -239,7 +256,17 @@ def root(**opts: tp.Any) -> None:
                 if response:
                     parsed_response = json.loads(response)
                     data = base64.b64decode(parsed_response["Data"])
-                    dest_fd.buffer.write(data)
+
+                    if line_prefix or line_buffering:
+                        for line in (tail + data).splitlines(keepends=True):
+                            if line.endswith(b"\n"):
+                                dest_fd.buffer.write(line_prefix)
+                                dest_fd.buffer.write(line)
+                            else:
+                                tail = line
+                    else:
+                        dest_fd.buffer.write(data)
+
                     dest_fd.flush()
                     offset = parsed_response["Offset"]
 
@@ -266,10 +293,14 @@ def root(**opts: tp.Any) -> None:
 
             time.sleep(2)
 
+        logger.debug("stopping streaming threads")
         stop_streaming.set()
 
         for thread in threads:
             thread.join()
+
+        if allocation_status["ClientStatus"] != "complete":
+            sys.exit(1)
     finally:
         try:
             nomad_api.job.deregister_job(dispatched_job_id)
