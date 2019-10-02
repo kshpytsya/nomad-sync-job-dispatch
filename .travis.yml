@@ -15,6 +15,6 @@ deploy:
     skip_cleanup: true
     script: twine upload dist/*.tar.gz && twine upload dist/*.whl
     on:
-      repo: kshpytsya/with-cloud-blob
+      repo: kshpytsya/nomad-sync-job-dispatch
       tags: true
       python: 3.7
