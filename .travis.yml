@@ -1,0 +1,21 @@
+dist: bionic
+language: python
+cache: pip
+install:
+  - pip install --upgrade setuptools pip
+  - pip install -r requirements-dev.txt
+  - pip list --format columns
+python:
+  - "3.7"
+script:
+  - inv check
+  - inv test
+  - inv build
+deploy:
+  - provider: script
+    skip_cleanup: true
+    script: twine upload dist/*.tar.gz && twine upload dist/*.whl
+    on:
+      repo: kshpytsya/with-cloud-blob
+      tags: true
+      python: 3.7
