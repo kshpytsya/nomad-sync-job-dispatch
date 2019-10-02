@@ -195,7 +195,8 @@ def root(**opts: tp.Any) -> None:
 
                 if allocations:
                     assert isinstance(allocations, list)
-                    return allocations
+                    if all(i.get("TaskStates") for i in allocations):
+                        return allocations
 
                 logger.debug(f"waiting for allocation to appear, {remaining:1.0f}s remaining till deadline")
                 time.sleep(min(remaining, opts["alloc_timeout_step"]))
