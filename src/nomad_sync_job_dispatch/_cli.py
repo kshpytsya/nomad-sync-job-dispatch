@@ -200,20 +200,21 @@ def root(**opts: tp.Any) -> None:
             raise click.ClickException(f"expected a single allocation to appear, but got {len(allocations)}")
 
         allocation = allocations[0]
-        alloc_id = allocation["ID"]
+        allocation_id = allocation["ID"]
 
-        logger.debug(f"got allocation {alloc_id}")
+        logger.debug(f"got allocation {allocation_id}")
 
-        if opts["task"] is None:
-            tasks_to_monitor = sorted(allocation["TaskStates"])
-        else:
+        if opts["task"]:
             tasks_to_monitor = []
             for i in opts["task"]:
                 if i not in allocation["TaskStates"]:
                     raise click.ClickException(f"task \"{i}\" is not found")
                 tasks_to_monitor.append(i)
+        else:
+            tasks_to_monitor = sorted(allocation["TaskStates"])
 
         threads = []
+        stop_streaming = threading.Event()
 
         def streaming_func(task: str, log_type: int) -> None:
             offset = 0
@@ -224,26 +225,26 @@ def root(**opts: tp.Any) -> None:
             while True:
                 try:
                     response = nomad_api.client.stream_logs.stream(
-                        id=alloc_id,
+                        id=allocation_id,
                         task=task,
                         offset=offset,
                         type=type_str,
                     )
                 except nomad.api.exceptions.BaseNomadException as e:
                     logger.error(
-                        f"log streaming failed (alloc={alloc_id}, task={task}, type={type}): {e.nomad_resp.text}",
+                        f"log streaming failed (alloc={allocation_id}, task={task}, type={type}): {e.nomad_resp.text}",
                     )
                     break
 
-                if not response:
-                    break
+                if response:
+                    parsed_response = json.loads(response)
+                    data = base64.b64decode(parsed_response["Data"])
+                    dest_fd.buffer.write(data)
+                    dest_fd.flush()
+                    offset = parsed_response["Offset"]
 
-                parsed_response = json.loads(response)
-                data = base64.b64decode(parsed_response["Data"])
-                dest_fd.buffer.write(data)
-                dest_fd.flush()
-                offset = parsed_response["Offset"]
-                time.sleep(log_poll_interval)
+                if stop_streaming.wait(log_poll_interval):
+                    break
 
         for task_to_monitor in tasks_to_monitor:
             for log_type in [0, 1]:
@@ -251,6 +252,21 @@ def root(**opts: tp.Any) -> None:
 
         for thread in threads:
             thread.start()
+
+        while True:
+            try:
+                # TODO find a way to use "blocking query" mechaninsm which
+                # doesn't seem to be directly supported by python-nomad
+                allocation_status = nomad_api.allocation.get_allocation(allocation_id)
+            except nomad.api.exceptions.BaseNomadException as e:
+                raise click.ClickException(f"failed getting allocation status: {e.nomad_resp.text}")
+
+            if allocation_status["ClientStatus"] in ["complete", "failed", "lost"]:
+                break
+
+            time.sleep(2)
+
+        stop_streaming.set()
 
         for thread in threads:
             thread.join()
