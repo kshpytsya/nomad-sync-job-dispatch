@@ -260,7 +260,8 @@ def root(**opts: tp.Any) -> None:
                     )
                 except nomad.api.exceptions.BaseNomadException as e:
                     logger.error(
-                        f"log streaming failed (alloc={allocation_id}, task={task}, type={type}): {e.nomad_resp.text}",
+                        f"log streaming failed (alloc={allocation_id}, task={task}, type={type_str}): "
+                        f"{e.nomad_resp.text}",
                     )
                     break
 
